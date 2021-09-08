@@ -30,7 +30,10 @@ import SpriteKit
 import AVFoundation
 
 class GameScene: SKScene {
+  private static var backgroundMusicPlayer: AVAudioPlayer!
   private var particles: SKEmitterNode?
+  private var crocodile: SKSpriteNode!
+  private var prize: SKSpriteNode!
   
   override func didMove(to view: SKView) {
     setUpPhysics()
@@ -44,7 +47,9 @@ class GameScene: SKScene {
   //MARK: - Level setup
   
   private func setUpPhysics() {
-    
+    physicsWorld.contactDelegate = self
+    physicsWorld.gravity = CGVector(dx: 0.0, dy: -9.8)
+    physicsWorld.speed = 1.0
   }
   
   private func setUpScenery() {
@@ -64,37 +69,109 @@ class GameScene: SKScene {
   }
   
   private func setUpPrize() {
+    prize = SKSpriteNode(imageNamed: ImageName.prize)
+    prize.position = CGPoint(x: size.width * 0.5, y: size.height * 0.7)
+    prize.zPosition = Layer.prize
+    prize.physicsBody = SKPhysicsBody(circleOfRadius: prize.size.height / 2)
+    prize.physicsBody?.categoryBitMask = PhysicsCategory.prize
+    prize.physicsBody?.collisionBitMask = 0
+    prize.physicsBody?.density = 0.5
     
+    addChild(prize)
   }
   
   //MARK: - Vine methods
   
   private func setUpVines() {
+    let decoder = PropertyListDecoder()
+    guard
+      let dataFile = Bundle.main.url(
+        forResource: GameConfiguration.vineDataFile,
+        withExtension: nil),
+      let data = try? Data(contentsOf: dataFile),
+      let vines = try? decoder.decode([VineData].self, from: data)
+    else {
+      return
+    }
     
+    // 1 add vines
+    for (i, vineData) in vines.enumerated() {
+      let anchorPoint = CGPoint(
+        x: vineData.relAnchorPoint.x * size.width,
+        y: vineData.relAnchorPoint.y * size.height)
+      let vine = VineNode(
+        length: vineData.length,
+        anchorPoint: anchorPoint,
+        name: "\(i)")
+      
+      // 2 add to scene
+      vine.addToScene(self)
+      
+      // 3 connect the other end of the vine to the prize
+      vine.attachToPrize(prize)
+    }
   }
   
   //MARK: - Croc methods
   
   private func setUpCrocodile() {
-    
+    crocodile = SKSpriteNode(imageNamed: ImageName.crocMouthClosed)
+    crocodile.position = CGPoint(x: size.width * 0.75, y: size.height * 0.312)
+    crocodile.zPosition = Layer.crocodile
+    crocodile.physicsBody = SKPhysicsBody(
+      texture: SKTexture(imageNamed: ImageName.crocMask),
+      size: crocodile.size)
+    crocodile.physicsBody?.categoryBitMask = PhysicsCategory.crocodile
+    crocodile.physicsBody?.collisionBitMask = 0
+    crocodile.physicsBody?.contactTestBitMask = PhysicsCategory.prize
+    crocodile.physicsBody?.isDynamic = false
+    addChild(crocodile)
+    animateCrocodile()
   }
   
   private func animateCrocodile() {
+    let duration = Double.random(in: 2...4)
+    let open = SKAction.setTexture(SKTexture(imageNamed: ImageName.crocMouthOpen))
+    let wait = SKAction.wait(forDuration: duration)
+    let close = SKAction.setTexture(SKTexture(imageNamed: ImageName.crocMouthClosed))
+    let sequence = SKAction.sequence([wait, open, wait, close])
     
+    crocodile.run(.repeatForever(sequence))
   }
   
   private func runNomNomAnimation(withDelay delay: TimeInterval) {
-    
+    crocodile.removeAllActions()
+
+    let closeMouth = SKAction.setTexture(SKTexture(imageNamed: ImageName.crocMouthClosed))
+    let wait = SKAction.wait(forDuration: delay)
+    let openMouth = SKAction.setTexture(SKTexture(imageNamed: ImageName.crocMouthOpen))
+    let sequence = SKAction.sequence([closeMouth, wait, openMouth, wait, closeMouth])
+
+    crocodile.run(sequence)
   }
   
   //MARK: - Touch handling
-
+  
   override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-
+    
   }
   
   override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-    
+    for touch in touches {
+      let startPoint = touch.location(in: self)
+      let endPoint = touch.previousLocation(in: self)
+      
+      // check if vine cut
+      scene?.physicsWorld.enumerateBodies(
+        alongRayStart: startPoint,
+        end: endPoint,
+        using: { body, _, _, _ in
+          self.checkIfVineCut(withBody: body)
+      })
+      
+      // produce some nice particles
+      showMoveParticles(touchPosition: startPoint)
+    }
   }
   
   override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -115,11 +192,34 @@ class GameScene: SKScene {
   //MARK: - Game logic
   
   private func checkIfVineCut(withBody body: SKPhysicsBody) {
-    
+    let node = body.node!
+
+    // if it has a name it must be a vine node
+    if let name = node.name {
+      // snip the vine
+      node.removeFromParent()
+
+      // fade out all nodes matching name
+      enumerateChildNodes(withName: name, using: { node, _ in
+        let fadeAway = SKAction.fadeOut(withDuration: 0.25)
+        let removeNode = SKAction.removeFromParent()
+        let sequence = SKAction.sequence([fadeAway, removeNode])
+        node.run(sequence)
+      })
+    }
+    crocodile.removeAllActions()
+    crocodile.texture = SKTexture(imageNamed: ImageName.crocMouthOpen)
+    animateCrocodile()
   }
   
   private func switchToNewGame(withTransition transition: SKTransition) {
-    
+    let delay = SKAction.wait(forDuration: 1)
+    let sceneChange = SKAction.run {
+      let scene = GameScene(size: self.size)
+      self.view?.presentScene(scene, transition: transition)
+    }
+
+    run(.sequence([delay, sceneChange]))
   }
   
   //MARK: - Audio
@@ -131,11 +231,24 @@ class GameScene: SKScene {
 
 extension GameScene: SKPhysicsContactDelegate {
   override func update(_ currentTime: TimeInterval) {
-    
+    if prize.position.y <= 0 {
+      switchToNewGame(withTransition: .fade(withDuration: 1.0))
+    }
   }
   
   func didBegin(_ contact: SKPhysicsContact) {
-    
+    if (contact.bodyA.node == crocodile && contact.bodyB.node == prize)
+      || (contact.bodyA.node == prize && contact.bodyB.node == crocodile) {
+      
+      // shrink the pineapple away
+      let shrink = SKAction.scale(to: 0, duration: 0.08)
+      let removeNode = SKAction.removeFromParent()
+      let sequence = SKAction.sequence([shrink, removeNode])
+      prize.run(sequence)
+      
+      runNomNomAnimation(withDelay: 0.15)
+      switchToNewGame(withTransition: .doorway(withDuration: 1.0))
+    }
   }
 }
 
