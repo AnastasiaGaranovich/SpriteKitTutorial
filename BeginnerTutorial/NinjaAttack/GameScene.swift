@@ -96,7 +96,7 @@ class GameScene: SKScene {
   }
   
   func random() -> CGFloat {
-    return CGFloat(Float(arc4random()) / 0xFFFFFFFF)
+    return CGFloat.random(in: 0...1)
   }
   
   func random(min: CGFloat, max: CGFloat) -> CGFloat {
