@@ -56,8 +56,8 @@ class GameOverScene: SKScene {
         let scene = GameScene(size: size)
         self.view?.presentScene(scene, transition:reveal)
       }
-      ]))
-   }
+    ]))
+  }
   
   // 6
   required init(coder aDecoder: NSCoder) {
